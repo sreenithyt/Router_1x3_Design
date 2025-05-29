@@ -1,114 +1,111 @@
-module router_reg(input clk,resetn,packet_valid,
-				  input [7:0] datain,
-				  input fifo_full,detect_add,ld_state,laf_state,full_state,lfd_state,rst_int_reg,
-				  output reg err,parity_done,low_packet_valid,
-				  output reg [7:0] dout);
-				  
-reg [7:0] hold_header_byte,fifo_full_state_byte,internal_parity,packet_parity_byte;
-//--------------------------------------------------------------------------------------------------------------
-//parity done
-always@(posedge clk)
-	begin
-		if(!resetn)
-			begin
-				parity_done<=1'b0;
-			end
+/***************************************************************************************************
+
+NAME        :  Sreenithy T
+FILENAME    :  router_reg.v
+DATE        :  03/05/2025
+DESCRIPTION :  ROUTER - REG
+
+****************************************************************************************************/
+module router_reg ( clock, resetn, pkt_valid, data_in, fifo_full, detect_add, ld_state, laf_state, full_state, lfd_state, rst_int_reg, err, parity_done, low_packet_valid, dout );
+
+input clock, resetn, pkt_valid, fifo_full, detect_add, ld_state, laf_state, full_state, lfd_state, rst_int_reg;
+input [7:0]data_in;
+output reg err, parity_done, low_packet_valid;
+output reg [7:0]dout;
+reg [7:0] header, int_reg, int_parity, ext_parity;
+  
+  
+  //------------------------------ DATA OUT LOGIC ---------------------------------
+
+	always@(posedge clock)
+   	begin
+      if(!resetn)
+      	begin
+	     dout    	 <=0;
+	     header  	 <=0;
+	     int_reg 	 <=0;
+       	end
+      else if(detect_add && pkt_valid && data_in[1:0]!=2'b11)
+	     header<=data_in;
+      else if(lfd_state)
+	     dout<=header;
+      else if(ld_state && !fifo_full)
+	     dout<=data_in;
+      else if(ld_state && fifo_full)
+	     int_reg<=data_in;
+      else if(laf_state)
+	     dout<=int_reg;
+     end
+
+  //--------------------------- LOW PACKET VALID LOGIC ----------------------------
 	
-		else 
-			begin
-				if(ld_state && !fifo_full && !packet_valid)
-						parity_done<=1'b1;
-				else if(laf_state && low_packet_valid && !parity_done)
-						parity_done<=1'b1;
-				else
-					begin
-						if(detect_add)
-							parity_done<=1'b0;
-					end
-			end
-	end
-//--------------------------------------------------------------------------------------------------------------------
-//low_packet valid
-always@(posedge clk)
-	begin
-		if(!resetn)
-			low_packet_valid<=1'b0;
-		else 
-			begin
-				if(rst_int_reg)
-					low_packet_valid<=1'b0;
-				if(ld_state==1'b1 && packet_valid==1'b0)
-					low_packet_valid<=1'b1;
-			end
-	end
-//----------------------------------------------------------------------------------------------------------
-//dout
-always@(posedge clk)
+      	always@(posedge clock)
+	   		begin
+              if(!resetn)
+	 				low_packet_valid<=0; 
+         		else if(rst_int_reg)
+	 				low_packet_valid<=0;
 
+              else if(ld_state && !pkt_valid) 
+         			low_packet_valid<=1;
+			end
+  //---------------------------- PARITY DONE LOGIC --------------------------------
+	
+	always@(posedge clock)
 	begin
-		if(!resetn)
-			dout<=8'b0;
-		else
+      if(!resetn)
+	  parity_done<=0;
+     else if(detect_add)
+	  parity_done<=0;
+      else if((ld_state && !fifo_full && !pkt_valid)
+              ||(laf_state && low_packet_valid && !parity_done))
+	  parity_done<=1;
+	end
+
+//--------------------------- PARITY CALCULATE LOGIC ----------------------------
+
+	always@(posedge clock)
+	begin
+      if(!resetn)
+	 int_parity<=0;
+	else if(detect_add)
+	 int_parity<=0;
+	else if(lfd_state && pkt_valid)
+	 int_parity<=int_parity^header;
+	else if(ld_state && pkt_valid && !full_state)
+	 int_parity<=int_parity^data_in;
+	else
+	 int_parity<=int_parity;
+	end
+	 
+
+//------------------------------- ERROR LOGIC -----------------------------------
+
+	always@(posedge clock)
 		begin
-			if(detect_add && packet_valid)
-				hold_header_byte<=datain;
-			else if(lfd_state)
-				dout<=hold_header_byte;
-			else if(ld_state && !fifo_full)
-				dout<=datain;
-			else if(ld_state && fifo_full)
-				fifo_full_state_byte<=datain;
-			else 
-				begin
-					if(laf_state)
-						dout<=fifo_full_state_byte;
-				end
-		end
-	end
-//-----------------------------------------------------------------------------------------------------
-// internal parity
-always@(posedge clk)
-	begin
-		if(!resetn)
-			internal_parity<=8'b0;
-		else if(lfd_state)
-			internal_parity<=internal_parity ^ hold_header_byte;
-		else if(ld_state && packet_valid && !full_state)
-			internal_parity<=internal_parity ^ datain;
-		else 
-			begin	
-				if (detect_add)
-					internal_parity<=8'b0;
-			end
-	end
-//--------------------------------------------------------------------------------------------------------	
-//error and packet_
-always@(posedge clk)
-	begin
-		if(!resetn)
-			packet_parity_byte<=8'b0;
-		else 
-			begin
-				if(!packet_valid && ld_state)
-					packet_parity_byte<=datain;
-			end
-	end
-//-------------------------------------------------------------------------------------------------------------------------------------
-//error
-always@(posedge clk)
-	begin
-		if(!resetn)
-			err<=1'b0;
-		else 
-			begin
-				if(parity_done)
-				begin
-					if(internal_parity!=packet_parity_byte)
-						err<=1'b1;
-					else
-						err<=1'b0;
-				end
-			end
-	end
+          if(!resetn)
+	  			err<=0;
+	      else if(parity_done)
+	       		begin
+	 				if (int_parity==ext_parity)
+	    				err<=0;
+	 				else 
+	    			err<=1;
+	 			end
+	 	   else
+	    		err<=0;
+	      end
 
-endmodule 
+//------------------------------- EXTERNAL PARITY LOGIC -------------------------
+
+	always@(posedge clock)
+	begin
+      if(!resetn)
+	  		ext_parity<=0;
+      else if(detect_add)
+	  		ext_parity<=0;
+      else if((ld_state && !fifo_full && !pkt_valid) || (laf_state && !parity_done && low_packet_valid))
+	  		ext_parity<=data_in;
+	 end
+
+endmodule
